@@ -1,0 +1,67 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="h3 m-0">Gestión de Hojas</h1>
+  <div class="d-flex gap-2">
+    <form method="post" action="{{ url_for('create_today') }}">
+      <button class="btn btn-primary">Crear HOY ({{ today }})</button>
+    </form>
+  </div>
+</div>
+
+<div id="mensaje" class="alert d-none"></div>
+
+<div class="card">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-striped table-hover m-0">
+        <thead>
+          <tr>
+            <th>Fecha</th>
+            <th class="text-end">Saldo inicial</th>
+            <th class="text-end">Saldo final</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for d in days %}
+          <tr>
+            <td class="fw-medium">{{ d['date'] }}</td>
+            <td class="text-end">{{ '%.2f'|format(d['opening']) }}</td>
+            <td class="text-end">{{ '%.2f'|format(d['closing']) }}</td>
+            <td class="text-end">
+              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('day_view', day_str=d['date']) }}">Abrir</a>
+            </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="4" class="text-center text-muted py-4">No hay días creados aún.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Opcional: mostrar mensajes al crear hoja vía AJAX
+  const form = document.querySelector("form[action='{{ url_for('create_today') }}']");
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    let resp = await fetch(form.action, { method: "POST" });
+    let data = await resp.json();
+    let mensaje = document.getElementById("mensaje");
+    mensaje.classList.remove("d-none", "alert-danger", "alert-success");
+    if (data.error) {
+      mensaje.classList.add("alert", "alert-danger");
+      mensaje.innerText = data.error;
+    } else {
+      mensaje.classList.add("alert", "alert-success");
+      mensaje.innerText = data.message;
+      setTimeout(() => window.location.reload(), 1500);
+    }
+  });
+</script>
+{% endblock %}
+
