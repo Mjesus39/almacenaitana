@@ -8,49 +8,43 @@ import re
 
 # ================== CONFIG ==================
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-<<<<<<< HEAD
-SPREADSHEET_ID = "1FOze1-FD8M7o31oxx7zJR2S27mjzjp2D9rrnfGvAOeY"
+SPREADSHEET_ID = "1jFPOu6RGoEyTeFyS79crPx7JxlMl5AeEslCf9_aQ6iI"  # Tu Google Sheet
 
-# Leer credenciales desde variable de entorno o archivo local
-creds_json = os.getenv("GOOGLE_CREDENTIALS")
+# ================== CREDENCIALES ==================
+def cargar_credenciales():
+    google_creds_env = os.getenv("GOOGLE_CREDENTIALS")
+    if google_creds_env:
+        try:
+            creds_dict = json.loads(google_creds_env)
+            return Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+        except json.JSONDecodeError:
+            raise Exception("❌ La variable de entorno GOOGLE_CREDENTIALS no contiene un JSON válido")
+    raise Exception("❌ No se encontró la variable de entorno GOOGLE_CREDENTIALS")
 
-if creds_json:
-    # Render → lee desde variable de entorno
-    creds_dict = json.loads(creds_json)
-    creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
-else:
-    # Local → usa el archivo credentials.json
-    if not os.path.exists("credentials.json"):
-        raise Exception("❌ No se encontró GOOGLE_CREDENTIALS ni el archivo credentials.json")
-    creds = Credentials.from_service_account_file("credentials.json", scopes=SCOPES)
-=======
-SPREADSHEET_ID = "1SDgZRJJZtpFIbinH8A85BIPM1y7sr4LbYbSkwcQ7QRE"  # <-- ID de la hoja de tu hermano
-
-# Leer credenciales desde variable de entorno
-creds_dict = json.loads(os.getenv("GOOGLE_CREDENTIALS"))
-creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
->>>>>>> 1c874ed (Primer commit proyecto Bitácora Sofía)
-
-# Crea la app de Flask
-app = Flask(__name__)
-
-# Crea el cliente de Google Sheets
+creds = cargar_credenciales()
 service = build("sheets", "v4", credentials=creds)
+
+# ================== FLASK APP ==================
+app = Flask(__name__, template_folder="templates")
 
 # ================== HELPERS ==================
 def obtener_ultima_hoja():
-    """ Devuelve el título de la última hoja con formato YYYY-MM-DD. """
     spreadsheet = service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute()
     sheets = spreadsheet.get("sheets", [])
     fechas = []
     for s in sheets:
         title = s["properties"]["title"]
-        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", title):
+        if re.fullmatch(r"\d{4}-\d{1,2}-\d{1,2}", title):
             fechas.append(title)
     if not fechas:
         return None
     fechas.sort(reverse=True)
     return fechas[0]
+
+def hoja_existe(nombre_hoja):
+    spreadsheet = service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute()
+    sheets = [s["properties"]["title"] for s in spreadsheet.get("sheets", [])]
+    return nombre_hoja in sheets
 
 # ================== ROUTES ==================
 @app.route("/")
@@ -61,23 +55,31 @@ def index():
 @app.route("/create_today", methods=["POST"])
 def create_today():
     hoy = datetime.today().strftime("%Y-%m-%d")
-    ultima_hoja = obtener_ultima_hoja()
-    mes_actual = datetime.today().strftime("%Y-%m")
+    print("Fecha de hoy:", hoy)
 
+    if hoja_existe(hoy):
+        return jsonify({"error": f"La hoja '{hoy}' ya existe."}), 400
+
+    ultima_hoja = obtener_ultima_hoja()
     if not ultima_hoja:
         return jsonify({"error": "No existe ninguna hoja anterior con datos."}), 400
+    print("Última hoja detectada:", ultima_hoja)
 
-    # 1) Crear nueva hoja
-    requests = [{"addSheet": {"properties": {"title": hoy}}}]
-    service.spreadsheets().batchUpdate(
-        spreadsheetId=SPREADSHEET_ID, body={"requests": requests}
-    ).execute()
+    # 1️⃣ Crear nueva hoja
+    try:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=SPREADSHEET_ID,
+            body={"requests": [{"addSheet": {"properties": {"title": hoy}}}]}
+        ).execute()
+        print(f"Hoja '{hoy}' creada correctamente")
+    except Exception as e:
+        print("Error al crear hoja:", e)
+        return jsonify({"error": str(e)}), 500
 
-    # 2) Copiar encabezados (A-G)
+    # 2️⃣ Copiar encabezados
     encabezados = service.spreadsheets().values().get(
-        spreadsheetId=SPREADSHEET_ID, range=f"{ultima_hoja}!A1:G1"
+        spreadsheetId=SPREADSHEET_ID, range=f"{ultima_hoja}!A1:H1"
     ).execute().get("values", [])
-
     if encabezados:
         service.spreadsheets().values().update(
             spreadsheetId=SPREADSHEET_ID,
@@ -85,33 +87,34 @@ def create_today():
             valueInputOption="USER_ENTERED",
             body={"values": encabezados}
         ).execute()
+        print("Encabezados copiados")
 
-    # 3) Copiar base (A y B) dejando C, D, E vacías
+    # 3️⃣ Copiar datos de productos
     result = service.spreadsheets().values().get(
-        spreadsheetId=SPREADSHEET_ID, range=f"{ultima_hoja}!A2:B"
+        spreadsheetId=SPREADSHEET_ID, range=f"{ultima_hoja}!B2:H"
     ).execute()
-    values = result.get("values", [])
+    valores = result.get("values", [])
 
-    nueva_data = []   # A..E
-    formulas_f = []  # F
-    formulas_g = []  # G
-    fila_excel = 2   # empezamos en la fila 2
+    nueva_data = []
+    for fila in valores:
+        producto = fila[0] if len(fila) >= 1 else ""
+        valor_unit = fila[1] if len(fila) >= 2 else ""
+        utilidad = fila[2] if len(fila) >= 3 else ""
+        total_valor = ""  # Se reinicia
+        unidades_vendidas = 0
+        unidades_restantes = fila[5] if len(fila) >= 6 else 0
+        inventario_inicial = fila[6] if len(fila) >= 7 else 0
 
-    for fila in values:
-        if len(fila) >= 2:
-            nueva_data.append([
-                hoy,      # A: fecha nueva
-                fila[1],  # B: cliente
-                "",       # C: préstamo
-                "",       # D: interés
-                ""        # E: abono
-            ])
-            formulas_f.append([f"='{ultima_hoja}'!F{fila_excel} + C{fila_excel}*(1+D{fila_excel}/100) - E{fila_excel}"])
-            if mes_actual == ultima_hoja[:7]:
-                formulas_g.append([f"='{ultima_hoja}'!G{fila_excel} + C{fila_excel}"])
-            else:
-                formulas_g.append([f"C{fila_excel}"])
-            fila_excel += 1
+        nueva_data.append([
+            hoy,
+            producto,
+            valor_unit,
+            utilidad,
+            total_valor,
+            unidades_vendidas,
+            unidades_restantes,
+            inventario_inicial
+        ])
 
     if nueva_data:
         service.spreadsheets().values().update(
@@ -120,31 +123,31 @@ def create_today():
             valueInputOption="USER_ENTERED",
             body={"values": nueva_data}
         ).execute()
+        print(f"{len(nueva_data)} filas copiadas a '{hoy}'")
 
-    if formulas_f:
-        service.spreadsheets().values().update(
-            spreadsheetId=SPREADSHEET_ID,
-            range=f"{hoy}!F2",
-            valueInputOption="USER_ENTERED",
-            body={"values": formulas_f}
-        ).execute()
+    # 4️⃣ Aplicar fórmulas
+    fila_final = len(nueva_data) + 1
+    formulas_total_valor = [[f"=IF(F{idx}=0,0,C{idx}*(1+D{idx}/100)*F{idx})"] for idx in range(2, fila_final+1)]
+    formulas_unidades_restantes = [[f"=H{idx}-F{idx}"] for idx in range(2, fila_final+1)]
 
-    if formulas_g:
-        service.spreadsheets().values().update(
-            spreadsheetId=SPREADSHEET_ID,
-            range=f"{hoy}!G2",
-            valueInputOption="USER_ENTERED",
-            body={"values": formulas_g}
-        ).execute()
+    service.spreadsheets().values().update(
+        spreadsheetId=SPREADSHEET_ID,
+        range=f"{hoy}!E2",
+        valueInputOption="USER_ENTERED",
+        body={"values": formulas_total_valor}
+    ).execute()
+    service.spreadsheets().values().update(
+        spreadsheetId=SPREADSHEET_ID,
+        range=f"{hoy}!G2",
+        valueInputOption="USER_ENTERED",
+        body={"values": formulas_unidades_restantes}
+    ).execute()
+    print("Fórmulas aplicadas correctamente")
 
     return redirect(url_for("index"))
 
 # ================== MAIN ==================
 if __name__ == "__main__":
-<<<<<<< HEAD
-    # Esto solo se usa en local. En Render se usará Gunicorn.
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
 
-=======
-    app.run(debug=True, host="0.0.0.0", port=5000)
->>>>>>> 1c874ed (Primer commit proyecto Bitácora Sofía)
