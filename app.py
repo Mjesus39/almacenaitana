@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, render_template, request, redirect, url_for
+from flask import Flask, jsonify, render_template, request
 from googleapiclient.discovery import build
 from google.oauth2.service_account import Credentials
 from datetime import datetime
@@ -18,8 +18,8 @@ def cargar_credenciales():
             creds_dict = json.loads(google_creds_env)
             return Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
         except json.JSONDecodeError:
-            raise Exception("❌ La variable de entorno GOOGLE_CREDENTIALS no contiene un JSON válido")
-    raise Exception("❌ No se encontró la variable de entorno GOOGLE_CREDENTIALS")
+            raise Exception("❌ GOOGLE_CREDENTIALS no contiene un JSON válido")
+    raise Exception("❌ No se encontró la variable GOOGLE_CREDENTIALS en Render")
 
 creds = cargar_credenciales()
 service = build("sheets", "v4", credentials=creds)
@@ -57,7 +57,7 @@ def create_today():
     hoy = datetime.today().strftime("%Y-%m-%d")
     print("Fecha de hoy:", hoy)
 
-    # 🚀 1. Si ya existe la hoja -> eliminarla siempre
+    # 🚀 1. Si ya existe la hoja -> eliminarla
     if hoja_existe(hoy):
         try:
             spreadsheet = service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute()
@@ -89,7 +89,7 @@ def create_today():
     except Exception as e:
         return jsonify({"error": f"Error al crear hoja: {str(e)}"}), 500
 
-    # 🚀 4. Copiar encabezados (A..J)
+    # 🚀 4. Copiar encabezados
     encabezados = service.spreadsheets().values().get(
         spreadsheetId=SPREADSHEET_ID, range=f"{ultima_hoja}!A1:J1"
     ).execute().get("values", [])
@@ -100,9 +100,8 @@ def create_today():
             valueInputOption="USER_ENTERED",
             body={"values": encabezados}
         ).execute()
-        print("Encabezados copiados")
 
-    # 🚀 5. Copiar filas base desde la hoja anterior (A..J)
+    # 🚀 5. Copiar filas base
     result = service.spreadsheets().values().get(
         spreadsheetId=SPREADSHEET_ID, range=f"{ultima_hoja}!A2:J"
     ).execute()
@@ -113,7 +112,7 @@ def create_today():
         producto            = fila[1] if len(fila) > 1 else ""   # B
         valor_unit          = fila[2] if len(fila) > 2 else ""   # C
         utilidad            = fila[3] if len(fila) > 3 else ""   # D
-        unidades_restantes  = fila[9] if len(fila) > 9 else 0    # J (de ayer) -> E (hoy)
+        unidades_restantes  = fila[9] if len(fila) > 9 else 0    # J (ayer) -> E
 
         nueva_data.append([
             hoy,                    # A
@@ -132,9 +131,8 @@ def create_today():
             valueInputOption="USER_ENTERED",
             body={"values": nueva_data}
         ).execute()
-        print(f"{len(nueva_data)} filas copiadas a '{hoy}'")
 
-    # 🚀 6. Aplicar fórmulas por fila
+    # 🚀 6. Aplicar fórmulas
     fila_final = len(nueva_data) + 1
     formulas_G = [[f"=C{idx}*(1+D{idx}/100)"] for idx in range(2, fila_final+1)]
     formulas_H = [[f"=G{idx}*E{idx}"]           for idx in range(2, fila_final+1)]
@@ -167,26 +165,7 @@ def create_today():
             body={"values": formulas_J}
         ).execute()
 
-    # 🚀 7. Insertar totales al final en H e I
-    fila_total = fila_final + 1
-    formula_total_H = [[f"=SUM(H2:H{fila_final})"]]
-    formula_total_I = [[f"=SUM(I2:I{fila_final})"]]
-
-    service.spreadsheets().values().update(
-        spreadsheetId=SPREADSHEET_ID,
-        range=f"{hoy}!H{fila_total}",
-        valueInputOption="USER_ENTERED",
-        body={"values": formula_total_H}
-    ).execute()
-
-    service.spreadsheets().values().update(
-        spreadsheetId=SPREADSHEET_ID,
-        range=f"{hoy}!I{fila_total}",
-        valueInputOption="USER_ENTERED",
-        body={"values": formula_total_I}
-    ).execute()
-
-    print("Fórmulas aplicadas correctamente, incluyendo totales.")
+    print("Fórmulas aplicadas correctamente")
     return jsonify({"message": f"Hoja '{hoy}' creada correctamente"}), 200
 
 # ================== MAIN ==================
