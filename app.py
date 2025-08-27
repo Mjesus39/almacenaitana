@@ -134,10 +134,22 @@ def create_today():
 
     # 🚀 6. Aplicar fórmulas
     fila_final = len(nueva_data) + 1
-    formulas_G = [[f"=C{idx}*(1+D{idx}/100)"] for idx in range(2, fila_final+1)]
-    formulas_H = [[f"=G{idx}*E{idx}"]           for idx in range(2, fila_final+1)]
-    formulas_I = [[f"=H{idx}-(G{idx}*F{idx})"]  for idx in range(2, fila_final+1)]
-    formulas_J = [[f"=E{idx}-F{idx}"]           for idx in range(2, fila_final+1)]
+
+    # Columna G → Precio con utilidad
+    formulas_G = [[f"=IF(AND(C{idx}<>\"\", D{idx}<>\"\"), C{idx}*(1+D{idx}/100), \"\")"] 
+                  for idx in range(2, fila_final+1)]
+
+    # Columna H → Total vendido
+    formulas_H = [[f"=IF(F{idx}<>\"\", G{idx}*F{idx}, \"\")"] 
+                  for idx in range(2, fila_final+1)]
+
+    # Columna I → Ganancia
+    formulas_I = [[f"=IF(AND(G{idx}<>\"\",F{idx}<>\"\"), H{idx}-(C{idx}*F{idx}), \"\")"] 
+                  for idx in range(2, fila_final+1)]
+
+    # Columna J → Inventario restante
+    formulas_J = [[f"=IF(AND(E{idx}<>\"\",F{idx}<>\"\"), E{idx}-F{idx}, \"\")"] 
+                  for idx in range(2, fila_final+1)]
 
     if nueva_data:
         service.spreadsheets().values().update(
