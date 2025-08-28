@@ -8,7 +8,7 @@ from googleapiclient.discovery import build
 app = Flask(__name__)
 
 # ========= CONFIGURACIÓN GOOGLE SHEETS =========
-SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")  # 👈 se obtiene desde variable de entorno
+SPREADSHEET_ID = "1ABCdEfGhijkLmnopQRstuVWXYZ1234567890"  # 👈 Pega aquí tu ID real
 
 # Cargar credenciales desde variable de entorno GOOGLE_CREDENTIALS
 creds_dict = json.loads(os.environ.get("GOOGLE_CREDENTIALS"))
@@ -107,3 +107,4 @@ def crear_hoja():
 # ========= MAIN =========
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
+
