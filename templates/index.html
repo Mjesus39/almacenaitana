@@ -1,67 +1,53 @@
-{% extends 'base.html' %}
-{% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
-  <h1 class="h3 m-0">Gestión de Hojas</h1>
-  <div class="d-flex gap-2">
-    <form method="post" action="{{ url_for('create_today') }}">
-      <button class="btn btn-primary">Crear HOY ({{ today }})</button>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Almacén Aitana</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 40px;
+        }
+        h1 {
+            color: #2c3e50;
+        }
+        .btn {
+            display: inline-block;
+            padding: 10px 20px;
+            margin: 10px 0;
+            background-color: #3498db;
+            color: white;
+            border-radius: 5px;
+            text-decoration: none;
+        }
+        .btn:hover {
+            background-color: #2980b9;
+        }
+        .mensaje {
+            margin-top: 20px;
+            padding: 10px;
+            border: 1px solid #27ae60;
+            background-color: #ecf9f1;
+            color: #27ae60;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>📦 Almacén Aitana</h1>
+    <p>Gestión de inventario diario.</p>
+
+    <!-- Botón para crear la hoja -->
+    <form action="/crear-hoja" method="POST">
+        <button type="submit" class="btn">➕ Crear hoja de hoy</button>
     </form>
-  </div>
-</div>
 
-<div id="mensaje" class="alert d-none"></div>
-
-<div class="card">
-  <div class="card-body p-0">
-    <div class="table-responsive">
-      <table class="table table-striped table-hover m-0">
-        <thead>
-          <tr>
-            <th>Fecha</th>
-            <th class="text-end">Saldo inicial</th>
-            <th class="text-end">Saldo final</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for d in days %}
-          <tr>
-            <td class="fw-medium">{{ d['date'] }}</td>
-            <td class="text-end">{{ '%.2f'|format(d['opening']) }}</td>
-            <td class="text-end">{{ '%.2f'|format(d['closing']) }}</td>
-            <td class="text-end">
-              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('day_view', day_str=d['date']) }}">Abrir</a>
-            </td>
-          </tr>
-          {% else %}
-          <tr>
-            <td colspan="4" class="text-center text-muted py-4">No hay días creados aún.</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+    <!-- Mensaje de confirmación -->
+    {% if request.args.get('mensaje') %}
+    <div class="mensaje">
+        {{ request.args.get('mensaje') }}
     </div>
-  </div>
-</div>
-
-<script>
-  // Opcional: mostrar mensajes al crear hoja vía AJAX
-  const form = document.querySelector("form[action='{{ url_for('create_today') }}']");
-  form.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    let resp = await fetch(form.action, { method: "POST" });
-    let data = await resp.json();
-    let mensaje = document.getElementById("mensaje");
-    mensaje.classList.remove("d-none", "alert-danger", "alert-success");
-    if (data.error) {
-      mensaje.classList.add("alert", "alert-danger");
-      mensaje.innerText = data.error;
-    } else {
-      mensaje.classList.add("alert", "alert-success");
-      mensaje.innerText = data.message;
-      setTimeout(() => window.location.reload(), 1500);
-    }
-  });
-</script>
-{% endblock %}
+    {% endif %}
+</body>
+</html>
 

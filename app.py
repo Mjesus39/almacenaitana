@@ -1,196 +1,114 @@
-from flask import Flask, jsonify, render_template, request, redirect, url_for
-from googleapiclient.discovery import build
-from google.oauth2.service_account import Credentials
+from flask import Flask, render_template, request, redirect, url_for
 from datetime import datetime
 import os
 import json
-import re
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
 
-# ================== CONFIG ==================
-SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-SPREADSHEET_ID = "1jFPOu6RGoEyTeFyS79crPx7JxlMl5AeEslCf9_aQ6iI"  # Tu Google Sheet
+app = Flask(__name__)
 
-# ================== CREDENCIALES ==================
-def cargar_credenciales():
-    google_creds_env = os.getenv("GOOGLE_CREDENTIALS")
-    if google_creds_env:
-        try:
-            creds_dict = json.loads(google_creds_env)
-            return Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
-        except json.JSONDecodeError:
-            raise Exception("❌ La variable de entorno GOOGLE_CREDENTIALS no contiene un JSON válido")
-    raise Exception("❌ No se encontró la variable de entorno GOOGLE_CREDENTIALS")
+# ========= CONFIGURACIÓN GOOGLE SHEETS =========
+SPREADSHEET_ID = "TU_SPREADSHEET_ID"  # 👈 pon aquí el ID de tu Google Sheet
 
-creds = cargar_credenciales()
+# Cargar credenciales desde variable de entorno GOOGLE_CREDENTIALS
+creds_dict = json.loads(os.environ.get("GOOGLE_CREDENTIALS"))
+creds = service_account.Credentials.from_service_account_info(
+    creds_dict,
+    scopes=["https://www.googleapis.com/auth/spreadsheets"]
+)
+
 service = build("sheets", "v4", credentials=creds)
 
-# ================== FLASK APP ==================
-app = Flask(__name__, template_folder="templates")
+# ========= FUNCIÓN PARA CREAR HOJA NUEVA =========
+def crear_hoja_nueva():
+    # Nombre de la hoja de hoy (YYYY-MM-DD)
+    hoy = datetime.today().strftime("%Y-%m-%d")
+    
+    # 1. Obtener la última hoja (ayer)
+    sheet_metadata = service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute()
+    hojas = sheet_metadata.get("sheets", [])
+    ultima_hoja = hojas[-1]["properties"]["title"]  # última hoja
+    print(f"Última hoja encontrada: {ultima_hoja}")
 
-# ================== HELPERS ==================
-def obtener_ultima_hoja():
-    spreadsheet = service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute()
-    sheets = spreadsheet.get("sheets", [])
-    fechas = []
-    for s in sheets:
-        title = s["properties"]["title"]
-        if re.fullmatch(r"\d{4}-\d{1,2}-\d{1,2}", title):
-            fechas.append(title)
-    if not fechas:
-        return None
-    fechas.sort(reverse=True)
-    return fechas[0]
+    # 2. Leer datos de la última hoja
+    rango = f"{ultima_hoja}!A:J"
+    resultado = service.spreadsheets().values().get(
+        spreadsheetId=SPREADSHEET_ID,
+        range=rango
+    ).execute()
+    valores = resultado.get("values", [])
 
-def hoja_existe(nombre_hoja):
-    spreadsheet = service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute()
-    sheets = [s["properties"]["title"] for s in spreadsheet.get("sheets", [])]
-    return nombre_hoja in sheets
+    if not valores:
+        print("La hoja anterior está vacía.")
+        return "La hoja anterior está vacía."
 
-# ================== ROUTES ==================
+    # 3. Crear la nueva hoja
+    requests = [
+        {
+            "addSheet": {
+                "properties": {
+                    "title": hoy
+                }
+            }
+        }
+    ]
+    service.spreadsheets().batchUpdate(
+        spreadsheetId=SPREADSHEET_ID,
+        body={"requests": requests}
+    ).execute()
+
+    # 4. Construir datos para la nueva hoja
+    nuevas_filas = []
+    for i, fila in enumerate(valores):
+        if i == 0:
+            # Encabezados
+            nuevas_filas.append(fila)
+        else:
+            # A = fecha de hoy
+            fecha = hoy
+            # B, C, D iguales
+            producto = fila[1] if len(fila) > 1 else ""
+            interno = fila[2] if len(fila) > 2 else ""
+            utilidad = fila[3] if len(fila) > 3 else ""
+            # E = J de ayer (stock inicial)
+            iniciales = fila[9] if len(fila) > 9 else "0"
+            # F = 0 (vendidas reinicia)
+            vendidas = "0"
+            # Fórmulas corregidas
+            nuevas_filas.append([
+                fecha, 
+                producto, 
+                interno, 
+                utilidad, 
+                iniciales, 
+                vendidas,
+                "=C{0}*(1+D{0}/100)".format(i+1),   # G (precio con utilidad)
+                "=F{0}*G{0}".format(i+1),           # H (total vendido)
+                "=(E{0}-F{0})*G{0}".format(i+1),    # I (valor inventario)
+                "=E{0}-F{0}".format(i+1)            # J (stock final)
+            ])
+
+    # 5. Escribir en la hoja nueva
+    rango_nueva = f"{hoy}!A1"
+    service.spreadsheets().values().update(
+        spreadsheetId=SPREADSHEET_ID,
+        range=rango_nueva,
+        valueInputOption="USER_ENTERED",
+        body={"values": nuevas_filas}
+    ).execute()
+
+    return f"Hoja {hoy} creada con éxito."
+
+# ========= RUTAS DE FLASK =========
 @app.route("/")
 def index():
-    today = datetime.today().strftime("%Y-%m-%d")
-    return render_template("index.html", today=today)
+    return render_template("index.html")
 
-@app.route("/create_today", methods=["POST"])
-def create_today():
-    hoy = datetime.today().strftime("%Y-%m-%d")
-    print("Fecha de hoy:", hoy)
+@app.route("/crear-hoja", methods=["POST"])
+def crear_hoja():
+    mensaje = crear_hoja_nueva()
+    return redirect(url_for("index", mensaje=mensaje))
 
-    # 🚀 1. Si ya existe la hoja -> eliminarla siempre
-    if hoja_existe(hoy):
-        try:
-            spreadsheet = service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute()
-            for s in spreadsheet["sheets"]:
-                if s["properties"]["title"] == hoy:
-                    sheet_id = s["properties"]["sheetId"]
-                    service.spreadsheets().batchUpdate(
-                        spreadsheetId=SPREADSHEET_ID,
-                        body={"requests": [{"deleteSheet": {"sheetId": sheet_id}}]}
-                    ).execute()
-                    print(f"⚠️ Hoja '{hoy}' eliminada para recrear")
-                    break
-        except Exception as e:
-            return jsonify({"error": f"No pude eliminar hoja existente: {str(e)}"}), 500
-
-    # 🚀 2. Buscar última hoja previa
-    ultima_hoja = obtener_ultima_hoja()
-    if not ultima_hoja:
-        return jsonify({"error": "No existe ninguna hoja anterior con datos."}), 400
-    print("Última hoja detectada:", ultima_hoja)
-
-    # 🚀 3. Crear nueva hoja
-    try:
-        service.spreadsheets().batchUpdate(
-            spreadsheetId=SPREADSHEET_ID,
-            body={"requests": [{"addSheet": {"properties": {"title": hoy}}}]}
-        ).execute()
-        print(f"✅ Hoja '{hoy}' creada correctamente")
-    except Exception as e:
-        return jsonify({"error": f"Error al crear hoja: {str(e)}"}), 500
-
-    # 🚀 4. Copiar encabezados (A..J)
-    encabezados = service.spreadsheets().values().get(
-        spreadsheetId=SPREADSHEET_ID, range=f"{ultima_hoja}!A1:J1"
-    ).execute().get("values", [])
-    if encabezados:
-        service.spreadsheets().values().update(
-            spreadsheetId=SPREADSHEET_ID,
-            range=f"{hoy}!A1",
-            valueInputOption="USER_ENTERED",
-            body={"values": encabezados}
-        ).execute()
-        print("Encabezados copiados")
-
-    # 🚀 5. Copiar filas base desde la hoja anterior (A..J)
-    result = service.spreadsheets().values().get(
-        spreadsheetId=SPREADSHEET_ID, range=f"{ultima_hoja}!A2:J"
-    ).execute()
-    valores = result.get("values", [])
-
-    nueva_data = []
-    for fila in valores:
-        producto            = fila[1] if len(fila) > 1 else ""   # B
-        valor_unit          = fila[2] if len(fila) > 2 else ""   # C
-        utilidad            = fila[3] if len(fila) > 3 else ""   # D
-        unidades_restantes  = fila[9] if len(fila) > 9 else 0    # J (de ayer) -> E (hoy)
-
-        nueva_data.append([
-            hoy,                    # A
-            producto,               # B
-            valor_unit,             # C
-            utilidad,               # D
-            unidades_restantes,     # E
-            0,                      # F
-            "", "", "", ""          # G,H,I,J
-        ])
-
-    if nueva_data:
-        service.spreadsheets().values().update(
-            spreadsheetId=SPREADSHEET_ID,
-            range=f"{hoy}!A2",
-            valueInputOption="USER_ENTERED",
-            body={"values": nueva_data}
-        ).execute()
-        print(f"{len(nueva_data)} filas copiadas a '{hoy}'")
-
-    # 🚀 6. Aplicar fórmulas por fila
-    fila_final = len(nueva_data) + 1
-    formulas_G = [[f"=C{idx}*(1+D{idx}/100)"] for idx in range(2, fila_final+1)]
-    formulas_H = [[f"=G{idx}*E{idx}"]           for idx in range(2, fila_final+1)]
-    formulas_I = [[f"=H{idx}-(G{idx}*F{idx})"]  for idx in range(2, fila_final+1)]
-    formulas_J = [[f"=E{idx}-F{idx}"]           for idx in range(2, fila_final+1)]
-
-    if nueva_data:
-        service.spreadsheets().values().update(
-            spreadsheetId=SPREADSHEET_ID,
-            range=f"{hoy}!G2:G{fila_final}",
-            valueInputOption="USER_ENTERED",
-            body={"values": formulas_G}
-        ).execute()
-        service.spreadsheets().values().update(
-            spreadsheetId=SPREADSHEET_ID,
-            range=f"{hoy}!H2:H{fila_final}",
-            valueInputOption="USER_ENTERED",
-            body={"values": formulas_H}
-        ).execute()
-        service.spreadsheets().values().update(
-            spreadsheetId=SPREADSHEET_ID,
-            range=f"{hoy}!I2:I{fila_final}",
-            valueInputOption="USER_ENTERED",
-            body={"values": formulas_I}
-        ).execute()
-        service.spreadsheets().values().update(
-            spreadsheetId=SPREADSHEET_ID,
-            range=f"{hoy}!J2:J{fila_final}",
-            valueInputOption="USER_ENTERED",
-            body={"values": formulas_J}
-        ).execute()
-
-    # 🚀 7. Insertar totales al final en H e I
-    fila_total = fila_final + 1
-    formula_total_H = [[f"=SUM(H2:H{fila_final})"]]
-    formula_total_I = [[f"=SUM(I2:I{fila_final})"]]
-
-    service.spreadsheets().values().update(
-        spreadsheetId=SPREADSHEET_ID,
-        range=f"{hoy}!H{fila_total}",
-        valueInputOption="USER_ENTERED",
-        body={"values": formula_total_H}
-    ).execute()
-
-    service.spreadsheets().values().update(
-        spreadsheetId=SPREADSHEET_ID,
-        range=f"{hoy}!I{fila_total}",
-        valueInputOption="USER_ENTERED",
-        body={"values": formula_total_I}
-    ).execute()
-
-    print("Fórmulas aplicadas correctamente, incluyendo totales.")
-    return jsonify({"message": f"Hoja '{hoy}' creada correctamente"}), 200
-
-# ================== MAIN ==================
+# ========= MAIN =========
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
-
+    app.run(host="0.0.0.0", port=5000, debug=True)
