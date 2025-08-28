@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, redirect, url_for
 from googleapiclient.discovery import build
 from google.oauth2.service_account import Credentials
 from datetime import datetime
@@ -18,8 +18,8 @@ def cargar_credenciales():
             creds_dict = json.loads(google_creds_env)
             return Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
         except json.JSONDecodeError:
-            raise Exception("❌ GOOGLE_CREDENTIALS no contiene un JSON válido")
-    raise Exception("❌ No se encontró la variable GOOGLE_CREDENTIALS en Render")
+            raise Exception("❌ La variable de entorno GOOGLE_CREDENTIALS no contiene un JSON válido")
+    raise Exception("❌ No se encontró la variable de entorno GOOGLE_CREDENTIALS")
 
 creds = cargar_credenciales()
 service = build("sheets", "v4", credentials=creds)
@@ -46,22 +46,6 @@ def hoja_existe(nombre_hoja):
     sheets = [s["properties"]["title"] for s in spreadsheet.get("sheets", [])]
     return nombre_hoja in sheets
 
-def obtener_locale_y_tokens():
-    """
-    Detecta el locale del Spreadsheet y devuelve:
-    - IF/AND/SUM o SI/Y/SUMA
-    - Separador de argumentos: ',' (EN) o ';' (ES)
-    """
-    spreadsheet = service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute()
-    locale = (spreadsheet.get("properties", {}) or {}).get("locale", "en_US").lower()
-
-    es = locale.startswith("es")
-    IF_FN   = "SI"   if es else "IF"
-    AND_FN  = "Y"    if es else "AND"
-    SUM_FN  = "SUMA" if es else "SUM"
-    SEP     = ";"    if es else ","
-    return IF_FN, AND_FN, SUM_FN, SEP, locale
-
 # ================== ROUTES ==================
 @app.route("/")
 def index():
@@ -73,10 +57,7 @@ def create_today():
     hoy = datetime.today().strftime("%Y-%m-%d")
     print("Fecha de hoy:", hoy)
 
-    IF_FN, AND_FN, SUM_FN, SEP, locale = obtener_locale_y_tokens()
-    print(f"Locale del Spreadsheet: {locale} -> usando {IF_FN}/{AND_FN} y separador '{SEP}'")
-
-    # 🚀 1. Si ya existe la hoja -> eliminarla
+    # 🚀 1. Si ya existe la hoja -> eliminarla siempre
     if hoja_existe(hoy):
         try:
             spreadsheet = service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute()
@@ -108,7 +89,7 @@ def create_today():
     except Exception as e:
         return jsonify({"error": f"Error al crear hoja: {str(e)}"}), 500
 
-    # 🚀 4. Copiar encabezados
+    # 🚀 4. Copiar encabezados (A..J)
     encabezados = service.spreadsheets().values().get(
         spreadsheetId=SPREADSHEET_ID, range=f"{ultima_hoja}!A1:J1"
     ).execute().get("values", [])
@@ -119,8 +100,9 @@ def create_today():
             valueInputOption="USER_ENTERED",
             body={"values": encabezados}
         ).execute()
+        print("Encabezados copiados")
 
-    # 🚀 5. Copiar filas base
+    # 🚀 5. Copiar filas base desde la hoja anterior (A..J)
     result = service.spreadsheets().values().get(
         spreadsheetId=SPREADSHEET_ID, range=f"{ultima_hoja}!A2:J"
     ).execute()
@@ -131,7 +113,7 @@ def create_today():
         producto            = fila[1] if len(fila) > 1 else ""   # B
         valor_unit          = fila[2] if len(fila) > 2 else ""   # C
         utilidad            = fila[3] if len(fila) > 3 else ""   # D
-        unidades_restantes  = fila[9] if len(fila) > 9 else 0    # J (ayer) -> E
+        unidades_restantes  = fila[9] if len(fila) > 9 else 0    # J (de ayer) -> E (hoy)
 
         nueva_data.append([
             hoy,                    # A
@@ -139,7 +121,7 @@ def create_today():
             valor_unit,             # C
             utilidad,               # D
             unidades_restantes,     # E
-            0,                      # F (unidades vendidas inicia en 0)
+            0,                      # F
             "", "", "", ""          # G,H,I,J
         ])
 
@@ -150,33 +132,16 @@ def create_today():
             valueInputOption="USER_ENTERED",
             body={"values": nueva_data}
         ).execute()
+        print(f"{len(nueva_data)} filas copiadas a '{hoy}'")
 
-    # 🚀 6. Aplicar fórmulas (localizadas por idioma)
+    # 🚀 6. Aplicar fórmulas por fila
     fila_final = len(nueva_data) + 1
-    EMPTY = '""'  # literal cadena vacía para la fórmula
-
-    def f_G(idx):
-        # G = precio con utilidad => C * (1 + D/100) si C y D no están vacíos
-        return f"={IF_FN}({AND_FN}(C{idx}<>\"\"{SEP} D{idx}<>\"\"){SEP} C{idx}*(1+D{idx}/100){SEP} {EMPTY})"
-
-    def f_H(idx):
-        # ✅ H = total vendido => F * G si F no está vacío
-        return f"={IF_FN}(F{idx}<>\"\"{SEP} F{idx}*G{idx}{SEP} {EMPTY})"
-
-    def f_I(idx):
-        # I = ganancia => H - (C*F) si G y F no están vacíos
-        return f"={IF_FN}({AND_FN}(G{idx}<>\"\"{SEP} F{idx}<>\"\"){SEP} H{idx}-(C{idx}*F{idx}){SEP} {EMPTY})"
-
-    def f_J(idx):
-        # J = inventario restante => E - F si E y F no están vacíos
-        return f"={IF_FN}({AND_FN}(E{idx}<>\"\"{SEP} F{idx}<>\"\"){SEP} E{idx}-F{idx}{SEP} {EMPTY})"
+    formulas_G = [[f"=C{idx}*(1+D{idx}/100)"] for idx in range(2, fila_final+1)]
+    formulas_H = [[f"=G{idx}*E{idx}"]           for idx in range(2, fila_final+1)]
+    formulas_I = [[f"=H{idx}-(G{idx}*F{idx})"]  for idx in range(2, fila_final+1)]
+    formulas_J = [[f"=E{idx}-F{idx}"]           for idx in range(2, fila_final+1)]
 
     if nueva_data:
-        formulas_G = [[f_G(idx)] for idx in range(2, fila_final + 1)]
-        formulas_H = [[f_H(idx)] for idx in range(2, fila_final + 1)]
-        formulas_I = [[f_I(idx)] for idx in range(2, fila_final + 1)]
-        formulas_J = [[f_J(idx)] for idx in range(2, fila_final + 1)]
-
         service.spreadsheets().values().update(
             spreadsheetId=SPREADSHEET_ID,
             range=f"{hoy}!G2:G{fila_final}",
@@ -202,10 +167,30 @@ def create_today():
             body={"values": formulas_J}
         ).execute()
 
-    print("Fórmulas aplicadas correctamente (con localización)")
+    # 🚀 7. Insertar totales al final en H e I
+    fila_total = fila_final + 1
+    formula_total_H = [[f"=SUM(H2:H{fila_final})"]]
+    formula_total_I = [[f"=SUM(I2:I{fila_final})"]]
+
+    service.spreadsheets().values().update(
+        spreadsheetId=SPREADSHEET_ID,
+        range=f"{hoy}!H{fila_total}",
+        valueInputOption="USER_ENTERED",
+        body={"values": formula_total_H}
+    ).execute()
+
+    service.spreadsheets().values().update(
+        spreadsheetId=SPREADSHEET_ID,
+        range=f"{hoy}!I{fila_total}",
+        valueInputOption="USER_ENTERED",
+        body={"values": formula_total_I}
+    ).execute()
+
+    print("Fórmulas aplicadas correctamente, incluyendo totales.")
     return jsonify({"message": f"Hoja '{hoy}' creada correctamente"}), 200
 
 # ================== MAIN ==================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
