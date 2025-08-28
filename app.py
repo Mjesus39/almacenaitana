@@ -46,6 +46,22 @@ def hoja_existe(nombre_hoja):
     sheets = [s["properties"]["title"] for s in spreadsheet.get("sheets", [])]
     return nombre_hoja in sheets
 
+def obtener_locale_y_tokens():
+    """
+    Detecta el locale del Spreadsheet y devuelve:
+    - IF/AND/SUM o SI/Y/SUMA
+    - Separador de argumentos: ',' (EN) o ';' (ES)
+    """
+    spreadsheet = service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute()
+    locale = (spreadsheet.get("properties", {}) or {}).get("locale", "en_US").lower()
+
+    es = locale.startswith("es")
+    IF_FN   = "SI"   if es else "IF"
+    AND_FN  = "Y"    if es else "AND"
+    SUM_FN  = "SUMA" if es else "SUM"
+    SEP     = ";"    if es else ","
+    return IF_FN, AND_FN, SUM_FN, SEP, locale
+
 # ================== ROUTES ==================
 @app.route("/")
 def index():
@@ -56,6 +72,9 @@ def index():
 def create_today():
     hoy = datetime.today().strftime("%Y-%m-%d")
     print("Fecha de hoy:", hoy)
+
+    IF_FN, AND_FN, SUM_FN, SEP, locale = obtener_locale_y_tokens()
+    print(f"Locale del Spreadsheet: {locale} -> usando {IF_FN}/{AND_FN} y separador '{SEP}'")
 
     # 🚀 1. Si ya existe la hoja -> eliminarla
     if hoja_existe(hoy):
@@ -120,7 +139,7 @@ def create_today():
             valor_unit,             # C
             utilidad,               # D
             unidades_restantes,     # E
-            0,                      # F
+            0,                      # F (unidades vendidas inicia en 0)
             "", "", "", ""          # G,H,I,J
         ])
 
@@ -132,26 +151,32 @@ def create_today():
             body={"values": nueva_data}
         ).execute()
 
-    # 🚀 6. Aplicar fórmulas
+    # 🚀 6. Aplicar fórmulas (localizadas por idioma)
     fila_final = len(nueva_data) + 1
+    EMPTY = '""'  # literal cadena vacía para la fórmula
 
-    # Columna G → Precio con utilidad
-    formulas_G = [[f"=IF(AND(C{idx}<>\"\", D{idx}<>\"\"), C{idx}*(1+D{idx}/100), \"\")"] 
-                  for idx in range(2, fila_final+1)]
+    def f_G(idx):
+        # G = precio con utilidad => C * (1 + D/100) si C y D no están vacíos
+        return f"={IF_FN}({AND_FN}(C{idx}<>\"\"{SEP} D{idx}<>\"\"){SEP} C{idx}*(1+D{idx}/100){SEP} {EMPTY})"
 
-    # ✅ Columna H → Total vendido (F * G)
-    formulas_H = [[f"=IF(F{idx}<>\"\", F{idx}*G{idx}, \"\")"] 
-                  for idx in range(2, fila_final+1)]
+    def f_H(idx):
+        # ✅ H = total vendido => F * G si F no está vacío
+        return f"={IF_FN}(F{idx}<>\"\"{SEP} F{idx}*G{idx}{SEP} {EMPTY})"
 
-    # Columna I → Ganancia
-    formulas_I = [[f"=IF(AND(G{idx}<>\"\",F{idx}<>\"\"), H{idx}-(C{idx}*F{idx}), \"\")"] 
-                  for idx in range(2, fila_final+1)]
+    def f_I(idx):
+        # I = ganancia => H - (C*F) si G y F no están vacíos
+        return f"={IF_FN}({AND_FN}(G{idx}<>\"\"{SEP} F{idx}<>\"\"){SEP} H{idx}-(C{idx}*F{idx}){SEP} {EMPTY})"
 
-    # Columna J → Inventario restante
-    formulas_J = [[f"=IF(AND(E{idx}<>\"\",F{idx}<>\"\"), E{idx}-F{idx}, \"\")"] 
-                  for idx in range(2, fila_final+1)]
+    def f_J(idx):
+        # J = inventario restante => E - F si E y F no están vacíos
+        return f"={IF_FN}({AND_FN}(E{idx}<>\"\"{SEP} F{idx}<>\"\"){SEP} E{idx}-F{idx}{SEP} {EMPTY})"
 
     if nueva_data:
+        formulas_G = [[f_G(idx)] for idx in range(2, fila_final + 1)]
+        formulas_H = [[f_H(idx)] for idx in range(2, fila_final + 1)]
+        formulas_I = [[f_I(idx)] for idx in range(2, fila_final + 1)]
+        formulas_J = [[f_J(idx)] for idx in range(2, fila_final + 1)]
+
         service.spreadsheets().values().update(
             spreadsheetId=SPREADSHEET_ID,
             range=f"{hoy}!G2:G{fila_final}",
@@ -177,7 +202,7 @@ def create_today():
             body={"values": formulas_J}
         ).execute()
 
-    print("Fórmulas aplicadas correctamente")
+    print("Fórmulas aplicadas correctamente (con localización)")
     return jsonify({"message": f"Hoja '{hoy}' creada correctamente"}), 200
 
 # ================== MAIN ==================
