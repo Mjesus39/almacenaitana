@@ -8,7 +8,7 @@ from googleapiclient.discovery import build
 app = Flask(__name__)
 
 # ========= CONFIGURACIÓN GOOGLE SHEETS =========
-SPREADSHEET_ID = "TU_SPREADSHEET_ID"  # 👈 pon aquí el ID de tu Google Sheet
+SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")  # 👈 se obtiene desde variable de entorno
 
 # Cargar credenciales desde variable de entorno GOOGLE_CREDENTIALS
 creds_dict = json.loads(os.environ.get("GOOGLE_CREDENTIALS"))
@@ -64,17 +64,12 @@ def crear_hoja_nueva():
             # Encabezados
             nuevas_filas.append(fila)
         else:
-            # A = fecha de hoy
             fecha = hoy
-            # B, C, D iguales
             producto = fila[1] if len(fila) > 1 else ""
             interno = fila[2] if len(fila) > 2 else ""
             utilidad = fila[3] if len(fila) > 3 else ""
-            # E = J de ayer (stock inicial)
             iniciales = fila[9] if len(fila) > 9 else "0"
-            # F = 0 (vendidas reinicia)
             vendidas = "0"
-            # Fórmulas corregidas
             nuevas_filas.append([
                 fecha, 
                 producto, 
@@ -82,10 +77,10 @@ def crear_hoja_nueva():
                 utilidad, 
                 iniciales, 
                 vendidas,
-                "=C{0}*(1+D{0}/100)".format(i+1),   # G (precio con utilidad)
-                "=F{0}*G{0}".format(i+1),           # H (total vendido)
-                "=(E{0}-F{0})*G{0}".format(i+1),    # I (valor inventario)
-                "=E{0}-F{0}".format(i+1)            # J (stock final)
+                f"=C{i+1}*(1+D{i+1}/100)",   # G (precio con utilidad)
+                f"=F{i+1}*G{i+1}",           # H (total vendido)
+                f"=(E{i+1}-F{i+1})*G{i+1}",  # I (valor inventario)
+                f"=E{i+1}-F{i+1}"            # J (stock final)
             ])
 
     # 5. Escribir en la hoja nueva
