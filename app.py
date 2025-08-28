@@ -46,17 +46,6 @@ def hoja_existe(nombre_hoja):
     sheets = [s["properties"]["title"] for s in spreadsheet.get("sheets", [])]
     return nombre_hoja in sheets
 
-def convertir_a_numero(valor):
-    try:
-        if valor == "":
-            return ""
-        # Si es entero exacto
-        if "." not in str(valor):
-            return int(valor)
-        return float(valor)
-    except:
-        return ""   # si no se puede convertir → celda vacía
-
 # ================== ROUTES ==================
 @app.route("/")
 def index():
@@ -120,10 +109,10 @@ def create_today():
 
     nueva_data = []
     for fila in valores:
-        producto            = fila[1] if len(fila) > 1 else ""   
-        valor_unit          = convertir_a_numero(fila[2]) if len(fila) > 2 else ""   
-        utilidad            = convertir_a_numero(fila[3]) if len(fila) > 3 else ""   
-        unidades_restantes  = convertir_a_numero(fila[9]) if len(fila) > 9 else 0    
+        producto            = fila[1] if len(fila) > 1 else ""   # B
+        valor_unit          = fila[2] if len(fila) > 2 else ""   # C
+        utilidad            = fila[3] if len(fila) > 3 else ""   # D
+        unidades_restantes  = fila[9] if len(fila) > 9 else 0    # J (ayer) -> E
 
         nueva_data.append([
             hoy,                    # A
@@ -146,12 +135,19 @@ def create_today():
     # 🚀 6. Aplicar fórmulas
     fila_final = len(nueva_data) + 1
 
+    # Columna G → Precio con utilidad
     formulas_G = [[f"=IF(AND(C{idx}<>\"\", D{idx}<>\"\"), C{idx}*(1+D{idx}/100), \"\")"] 
                   for idx in range(2, fila_final+1)]
+
+    # Columna H → Total vendido
     formulas_H = [[f"=IF(F{idx}<>\"\", G{idx}*F{idx}, \"\")"] 
                   for idx in range(2, fila_final+1)]
+
+    # Columna I → Ganancia
     formulas_I = [[f"=IF(AND(G{idx}<>\"\",F{idx}<>\"\"), H{idx}-(C{idx}*F{idx}), \"\")"] 
                   for idx in range(2, fila_final+1)]
+
+    # Columna J → Inventario restante
     formulas_J = [[f"=IF(AND(E{idx}<>\"\",F{idx}<>\"\"), E{idx}-F{idx}, \"\")"] 
                   for idx in range(2, fila_final+1)]
 
@@ -188,3 +184,4 @@ def create_today():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
