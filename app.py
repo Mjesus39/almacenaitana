@@ -139,8 +139,8 @@ def create_today():
     formulas_G = [[f"=IF(AND(C{idx}<>\"\", D{idx}<>\"\"), C{idx}*(1+D{idx}/100), \"\")"] 
                   for idx in range(2, fila_final+1)]
 
-    # Columna H → Total vendido
-    formulas_H = [[f"=IF(F{idx}<>\"\", G{idx}*F{idx}, \"\")"] 
+    # ✅ Columna H → Total vendido (F * G)
+    formulas_H = [[f"=IF(F{idx}<>\"\", F{idx}*G{idx}, \"\")"] 
                   for idx in range(2, fila_final+1)]
 
     # Columna I → Ganancia
@@ -184,4 +184,3 @@ def create_today():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-
